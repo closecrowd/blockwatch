@@ -52,6 +52,18 @@
 #
 #   pkill -USR1  'blockwatch2.sh'
 #
+# On some systems, the signal system is unreliable.  So there's a second
+# way to trigger a log rotate.  Sending the string defined as
+# LOGTOKEN below will cause an immediate rotation.  You can do this 
+# with the logger utility like this:
+#
+#   logger -p authpriv.info 'blockwatch_token'
+#
+# For security, change the default 'blockwatch_token' string in
+# this script and wherever you issue the logger command above.  A 
+# random alphanumeric string would be the best.  Set it to ""
+# to disable this rotation method entirely.
+#
 # Use this to keep your logfile from growing forever.
 #
 # This script uses only native tools found on nearly every 
@@ -62,7 +74,7 @@
 # It's a tiny SOAR!
 #
 # Mark Anacker  closecrowd@pm.me
-# Version 2.0
+# Version 2.1
 # -----------------------------------------------------
 #
 
@@ -93,7 +105,14 @@ HOMEIP=""
 # no logfile will be written.
 LOGFILE="/var/log/blockwatch.log"
 
+# A string that will be sent through syslog to trigger a log
+# rotation, on systems where signals are unreliable.  This should
+# be changed to something random and unique, so an adversary can't
+# mess with your system by using it as the attempted ssh user name 
+# (which gets passed to syslog).
+LOGTOKEN="blockwatch_token"     # change me
 
+##########
 
 # Logfile rotate flag global - set by a SIGUSR1
 ROTFLAG=""      # leave undefined
@@ -325,7 +344,7 @@ local OUT
 trap 'flag_rotate' SIGUSR1
 
 # remove any left-over PIDFILE when this script exits
-trap 'remove_pidfile' EXIT INT TERM
+trap 'remove_pidfile' EXIT SIGINT SIGTERM
 
 # verbose mode
 if [ "$FLAGS" == "-v" ]
@@ -353,6 +372,20 @@ do
     # verbose mode
     if [ "$FLAGS" == "-v" ]
     then echo "$INL"; fi
+
+    # if a token string is defined
+    if [ "$LOGTOKEN" ]
+    then
+        # and it's in the syslog message
+        if [[ $INL =~ "$LOGTOKEN" ]]
+        then
+            # switch to a new logfile
+            rotate_log
+            # reset the rotate flag
+            printf -v "ROTFLAG" -- ""
+            continue
+        fi
+    fi
 
     # if we were signalled to do a log rotate
     if [ "$ROTFLAG" ]
