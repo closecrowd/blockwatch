@@ -50,7 +50,7 @@
 # rotate the logfile to a date-based name, and then continue recording to
 # a new copy of the original name.  You can do this with:
 #
-#   pkill -USR1  'blockwatch2.sh'
+#   pkill -USR1 -f 'blockwatch.sh'
 #
 # On some systems, the signal system is unreliable.  So there's a second
 # way to trigger a log rotate.  Sending the string defined as
@@ -68,7 +68,7 @@
 #
 # This script uses only native tools found on nearly every 
 # Linux installation, and it very light on resources.  Namely,
-# bash >= version 4, itail, grep, and the ipset module in
+# bash >= version 4, tail, grep, and the ipset module in
 # iptables.
 #
 # It's a tiny SOAR!
@@ -190,7 +190,9 @@ rotate_log()
     then return; fi
 
     LOGDATE="$(date +'%F-%H-%M')"
- 
+
+    # make sure it's a new entry
+    rm -f "$LOGFILE.$LOGDATE.sav"
     # link the file to the new archive name
     ln $LOGFILE "$LOGFILE.$LOGDATE.sav"
     # get rid of the old name
@@ -340,11 +342,11 @@ local OUT
 #
 # ---------------------------------------------------------------------------
 
-# catch a SIGUSR1 signal and set the rotate flag
-trap 'flag_rotate' SIGUSR1
+# ignore USR1 in the main shell
+trap '' SIGUSR1
 
 # remove any left-over PIDFILE when this script exits
-trap 'remove_pidfile' EXIT SIGINT SIGTERM
+trap remove_pidfile EXIT SIGINT SIGTERM
 
 # verbose mode
 if [ "$FLAGS" == "-v" ]
@@ -360,12 +362,27 @@ then touch "$LOGFILE"; fi
 
 # read the lines from syslog
 # we use --follow=name to continue when logrotate switches 
-# to a new fil3
+# to a new file
 
-tail --follow=name $SYSLOG|while read INL
+tail --follow=name $SYSLOG|while true
 do
 
-    # skip blank lines
+    # catch a SIGUSR1 signal and set the rotate flag
+    trap flag_rotate SIGUSR1
+
+    # wait up to 10 seconds for a log line
+    read -t 10 INL
+
+    # if we were signalled to do a log rotate
+    if [ "$ROTFLAG" ]
+    then
+        # switch to a new logfile
+        rotate_log
+        # reset the rotate flag
+        ROTFLAG=""
+    fi
+
+    # timed out or an empty line
     if [ ! "$INL" ]
     then continue; fi
 
@@ -382,18 +399,9 @@ do
             # switch to a new logfile
             rotate_log
             # reset the rotate flag
-            printf -v "ROTFLAG" -- ""
+            ROTFLAG=""
             continue
         fi
-    fi
-
-    # if we were signalled to do a log rotate
-    if [ "$ROTFLAG" ]
-    then
-        # switch to a new logfile
-        rotate_log
-        # reset the rotate flag
-        printf -v "ROTFLAG" -- ""
     fi
 
     # get the current epoch timestamp for the csv log
